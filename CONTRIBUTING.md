@@ -6,7 +6,7 @@ welcome within the conventions below.
 ## Setup
 
 ```bash
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 python -m pytest -m "not probe_runtime" -q     # fast gate, ~2 min
 python -m pytest -q                            # full suite, ~6 min
 ```
@@ -41,8 +41,10 @@ With torch installed the full suite runs everything.
 
 - Keep each PR to one logical change with its tests.
 - The CI workflow (`.github/workflows/tests.yml`) is what a fork runs:
-  `pip install -r requirements.txt`, the two hygiene validators, then
-  `pytest`. It must stay green.
+  `pip install --require-hashes -r requirements.lock`, the two hygiene
+  validators, then `pytest`. It must stay green.
+- Dependency changes edit `requirements.txt` and regenerate
+  `requirements.lock` with the command at the top of `requirements.txt`.
 - Commit messages: a subject line that states the behavior change, a body
   that explains why, and test evidence.
 

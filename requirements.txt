@@ -1,3 +1,9 @@
+# Direct dependencies. CI and the sandbox image install from requirements.lock,
+# which pins these plus every transitive package with hashes. After editing
+# this file, regenerate the lock (tests/test_requirements_lock.py checks it):
+#   uv pip compile requirements.txt --generate-hashes --universal \
+#       --python-version 3.10 --no-header -o requirements.lock
+
 # Core pipeline dependencies (always needed)
 pyyaml>=6.0
 nbformat>=5.7.0          # Quickstart notebook generation
