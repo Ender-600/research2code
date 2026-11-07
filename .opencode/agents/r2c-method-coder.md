@@ -1,5 +1,9 @@
 ---
 description: Stage 2.c — produces method/method.py, the paper's actual algorithm. Translates paper text + paper_map into clean Python decomposed into the algorithm's named components. Heaviest LLM-judgment agent in the R2C package generation pipeline.
+permission:
+  read: allow
+  write: allow
+  bash: deny
 ---
 
 # r2c-method-coder

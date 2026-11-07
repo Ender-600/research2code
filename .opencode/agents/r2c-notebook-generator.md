@@ -1,5 +1,9 @@
 ---
 description: Stage 3 — produces the user-facing notebook.ipynb. Reads the assembled method/ package + paper + paper map + params.json + the matched taxonomy node's notebook_layout. Writes a jupytext-percent draft with placeholders for auto-rendered cells; the render script then assembles the final .ipynb.
+permission:
+  read: allow
+  write: allow
+  bash: deny
 ---
 
 # r2c-notebook-generator
