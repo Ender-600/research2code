@@ -71,7 +71,7 @@ def _find_csv_pair(p: Path) -> tuple[Path | None, Path | None]:
 
 
 def _load_pt(path: Path):
-    d = torch.load(path, weights_only=False)
+    d = torch.load(path, weights_only=True)
     return d["x_pool"], d["y_pool"], d["x_test"], d["y_test"]
 
 
@@ -122,7 +122,7 @@ def _download_mnist_subset(
     cache_path = cache_dir / "mnist_subset.pt"
     if cache_path.is_file():
         try:
-            cached = torch.load(cache_path, weights_only=False)
+            cached = torch.load(cache_path, weights_only=True)
             meta = cached.get("_meta", {})
             if (
                 meta.get("pool_size") == pool_size

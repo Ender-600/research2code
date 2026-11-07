@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import pickle
 import random
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -90,15 +91,63 @@ def _find_paired_dir(p: Path) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
+# Safe .pt loading
+# ---------------------------------------------------------------------------
+#
+# torch.load(weights_only=False) unpickles arbitrary objects, and unpickling
+# runs code stored in the file, so a .pt dropped into example_data/ (or a
+# planted cache) would execute with the user's privileges. weights_only=True
+# accepts only tensors, plain containers and primitives. Images are therefore
+# stored as {"mode", "size", "data"} byte records, which load safely and are
+# turned back into PIL images here. A legacy file that pickles PIL objects
+# needs full unpickling, which is allowed only when the user trusts the file
+# and sets R2C_TRUST_PICKLE=1.
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _torch_load_safe(path: Path):
+    try:
+        return torch.load(path, weights_only=True)
+    except pickle.UnpicklingError as e:
+        if _env_flag("R2C_TRUST_PICKLE"):
+            return torch.load(path, weights_only=False)
+        raise RuntimeError(
+            f"{path} holds objects other than tensors and plain containers "
+            "(for example pickled PIL images), and loading it would run code "
+            "stored in the file. Save images as image records (see "
+            "example_data/README.md), or, only if you trust this file, set "
+            "R2C_TRUST_PICKLE=1 to load it with full unpickling."
+        ) from e
+
+
+def image_to_record(img: Image) -> dict:
+    """Encode a PIL image as a dict that torch.load(weights_only=True) accepts."""
+    return {"mode": img.mode, "size": tuple(img.size), "data": img.tobytes()}
+
+
+def _as_image(item):
+    if isinstance(item, dict) and {"mode", "size", "data"} <= item.keys():
+        return PILImage.frombytes(item["mode"], tuple(item["size"]), item["data"])
+    return item
+
+
+def _as_images(items) -> list:
+    return [_as_image(item) for item in items]
+
+
+# ---------------------------------------------------------------------------
 # Per-format loaders
 # ---------------------------------------------------------------------------
 
 
 def _load_pt(path: Path):
-    d = torch.load(path, weights_only=False)
+    d = _torch_load_safe(path)
     return (
-        d["student_inputs_train"], d["teacher_inputs_train"], d["targets_train"],
-        d["student_inputs_test"],  d["teacher_inputs_test"],  d["targets_test"],
+        _as_images(d["student_inputs_train"]), d["teacher_inputs_train"], d["targets_train"],
+        _as_images(d["student_inputs_test"]),  d["teacher_inputs_test"],  d["targets_test"],
     )
 
 
@@ -136,7 +185,7 @@ def _load_paired_dir(paired_dir: Path, train_size: int, n_test: int, seed: int):
             fname = id_to_file[img_id]
             stem = Path(fname).stem
             images.append(PILImage.open(images_dir / fname).convert("RGB"))
-            point_clouds.append(torch.load(pc_dir / f"{stem}.pt", weights_only=False))
+            point_clouds.append(torch.load(pc_dir / f"{stem}.pt", weights_only=True))
             anns = id_to_anns[img_id]
             if anns:
                 xywh = torch.tensor([a["bbox"] for a in anns], dtype=torch.float)
@@ -189,7 +238,7 @@ def _generate_synthetic_cross_modal(
     cache_path = cache_dir / "synthetic_cross_modal.pt"
     if cache_path.is_file():
         try:
-            cached = torch.load(cache_path, weights_only=False)
+            cached = torch.load(cache_path, weights_only=True)
             meta = cached.get("_meta", {})
             if (
                 meta.get("train_size") == train_size
@@ -197,8 +246,8 @@ def _generate_synthetic_cross_modal(
                 and meta.get("seed") == seed
             ):
                 return (
-                    cached["student_inputs_train"], cached["teacher_inputs_train"], cached["targets_train"],
-                    cached["student_inputs_test"],  cached["teacher_inputs_test"],  cached["targets_test"],
+                    _as_images(cached["student_inputs_train"]), cached["teacher_inputs_train"], cached["targets_train"],
+                    _as_images(cached["student_inputs_test"]),  cached["teacher_inputs_test"],  cached["targets_test"],
                 )
         except Exception:
             pass  # fall through and regenerate
@@ -283,10 +332,10 @@ def _generate_synthetic_cross_modal(
 
     torch.save(
         {
-            "student_inputs_train": si_train,
+            "student_inputs_train": [image_to_record(img) for img in si_train],
             "teacher_inputs_train": ti_train,
             "targets_train": t_train,
-            "student_inputs_test": si_test,
+            "student_inputs_test": [image_to_record(img) for img in si_test],
             "teacher_inputs_test": ti_test,
             "targets_test": t_test,
             "_meta": {"train_size": train_size, "n_test": n_test, "seed": seed},

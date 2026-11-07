@@ -166,7 +166,7 @@ def load_data(
     # Try cached .pt first
     cache_path = data_dir / "cifar10_subset.pt"
     if cache_path.is_file():
-        d = torch.load(cache_path, weights_only=False)
+        d = torch.load(cache_path, weights_only=True)
         train_dataset = TensorDataset(d["x_train"], d["y_train"])
         test_dataset = TensorDataset(d["x_test"], d["y_test"])
     else:
