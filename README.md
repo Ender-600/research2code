@@ -37,6 +37,8 @@ cp .env.example .env
 /r2c-run bayesian-active-learning
 ```
 
+**Run it in the sandbox.** R2C executes code an LLM wrote from an untrusted paper. To keep that away from your home directory and credentials, run steps 3 and 4 inside the container instead: `sandbox/r2c-sandbox.sh build` once, then `sandbox/r2c-sandbox.sh` in place of `./r2c-start.sh`. See [sandbox/README.md](sandbox/README.md) for what it isolates and what it does not yet.
+
 The driver detaches and runs on its own, roughly 30 to 120 minutes depending on the paper and the model. The command prints a log path you can `tail -f` from any terminal. When it finishes:
 
 ```bash
