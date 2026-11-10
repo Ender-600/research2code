@@ -212,4 +212,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    import exec_sandbox  # a sibling of this file only when run as a script
+
+    exec_sandbox.relaunch_in_sandbox(__file__)
     sys.exit(main())

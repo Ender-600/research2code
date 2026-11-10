@@ -8,6 +8,7 @@ tests queue expected calls + canned outputs, then assert post-dispatch state.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,10 @@ import pytest
 # `scripts/` is importable via pyproject's `pythonpath = ["scripts"]`
 # (B-09); the repo root rides pytest's prepend mode through tests/__init__.py.
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# The suite runs fixtures, not generated code, and most machines have no srt.
+# test_exec_sandbox*.py turn the sandbox back on where they exercise it.
+os.environ.setdefault("R2C_EXEC_SANDBOX", "off")
 
 
 # ---------------------------------------------------------------------------

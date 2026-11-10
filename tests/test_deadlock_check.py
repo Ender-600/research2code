@@ -18,6 +18,14 @@ import subprocess
 import sys
 
 
+def _fake_stdout_stat(monkeypatch, fake_stat) -> None:
+    """Make fstat(1) report `fake_stat`. Every other descriptor keeps the real
+    answer: pytest's own output capture calls os.fstat while the patch is live."""
+    real_fstat = os.fstat
+    monkeypatch.setattr(
+        os, "fstat", lambda fd: fake_stat if fd == 1 else real_fstat(fd))
+
+
 def _import_target():
     """Return the detection function under test."""
     from run_pipeline import _detect_session_deadlock_risk  # noqa: PLC0415
@@ -102,7 +110,7 @@ def test_opencode_ancestor_plus_no_tty_plus_pipe_stdout_is_risk(monkeypatch):
     class _FakeStat:
         st_mode = stat.S_IFIFO | 0o600
         st_rdev = 0
-    monkeypatch.setattr(os, "fstat", lambda fd: _FakeStat())
+    _fake_stdout_stat(monkeypatch, _FakeStat())
 
     is_risk, diag = fn()
     assert is_risk is True
@@ -131,7 +139,7 @@ def test_opencode_ancestor_but_stdout_is_regular_file_returns_false(monkeypatch)
     class _FakeStat:
         st_mode = stat.S_IFREG | 0o644
         st_rdev = 0
-    monkeypatch.setattr(os, "fstat", lambda fd: _FakeStat())
+    _fake_stdout_stat(monkeypatch, _FakeStat())
 
     is_risk, diag = fn()
     assert is_risk is False
@@ -161,7 +169,7 @@ def test_opencode_ancestor_but_stdout_is_devnull_returns_false(monkeypatch, tmp_
     class _FakeStat:
         st_mode = stat.S_IFCHR | 0o666
         st_rdev = devnull_st.st_rdev
-    monkeypatch.setattr(os, "fstat", lambda fd: _FakeStat())
+    _fake_stdout_stat(monkeypatch, _FakeStat())
 
     is_risk, diag = fn()
     assert is_risk is False

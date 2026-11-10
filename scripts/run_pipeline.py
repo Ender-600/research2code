@@ -41,6 +41,7 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Callable, Literal, NamedTuple
 
@@ -100,6 +101,7 @@ from final_manifest import sha256_file, sha256_text, write_final_manifest  # noq
 import halt_catalog  # noqa: E402
 import render_claims_report  # noqa: E402
 import dependency_readiness  # noqa: E402
+import exec_sandbox  # noqa: E402
 import repo_scope_boundary  # noqa: E402
 import run_history  # noqa: E402
 import run_layout  # noqa: E402
@@ -2261,6 +2263,29 @@ def _degrade_reviewer_unusable(
     )
 
 
+def _run_sandboxed_step(
+    stage_id: str,
+    step: exec_sandbox.Step,
+    args: list[str],
+    *,
+    timeout: float | None,
+) -> subprocess.CompletedProcess:
+    """Run one generated-code step in its sandbox. A sandbox that cannot start
+    is a failed step, never a reason to run the code unconfined."""
+    try:
+        log(stage_id, "exec_sandbox", exec_sandbox.describe(step))
+        return exec_sandbox.run(
+            step, args, run_dir=exec_sandbox.run_dir_from_args(args),
+            repo_root=REPO_ROOT, cwd=REPO_ROOT, timeout=timeout,
+        )
+    except exec_sandbox.SandboxError as exc:
+        log(stage_id, "exec_sandbox_failed", str(exc))
+        return subprocess.CompletedProcess(
+            args=args, returncode=exec_sandbox.SANDBOX_FAILURE_EXIT,
+            stdout="", stderr=f"error: execution sandbox failed: {exc}\n",
+        )
+
+
 def run_script(
     stage_id: str, args: list[str], *, timeout: int = 300
 ) -> subprocess.CompletedProcess:
@@ -2279,11 +2304,15 @@ def run_script(
         for a in args
     )]
     log(stage_id, "subprocess", " ".join(cmd))
+    step = exec_sandbox.step_for_args(cmd[1:]) if exec_sandbox.enabled() else None
     try:
-        proc = subprocess.run(
-            cmd, cwd=str(REPO_ROOT), capture_output=True, text=True,
-            timeout=timeout,
-        )
+        if step is not None:
+            proc = _run_sandboxed_step(stage_id, step, cmd[1:], timeout=timeout)
+        else:
+            proc = subprocess.run(
+                cmd, cwd=str(REPO_ROOT), capture_output=True, text=True,
+                timeout=timeout,
+            )
     except subprocess.TimeoutExpired as exc:
         def _as_text(v: bytes | str | None) -> str:
             if isinstance(v, bytes):
@@ -11145,8 +11174,13 @@ def run_stage_2d(state: PipelineState) -> StageResult:
             state=state,
         )
 
+    # Sandboxed steps resolve packages from the run's own venv first.
+    requirement_check_options = (
+        {"version_for": partial(exec_sandbox.installed_version, paths.run_dir)}
+        if exec_sandbox.enabled() else {}
+    )
     local_requirements = dependency_readiness.check_local_requirements(
-        requirements_path
+        requirements_path, **requirement_check_options
     )
     if local_requirements.checker_error:
         return halt(
@@ -17548,12 +17582,19 @@ def run_delivery_gating(state: "PipelineState") -> dict:
     probe_report: dict | None = None
     battery_error: str | None = None
     try:
-        proc = subprocess.run(
-            [sys.executable, str(REPO_ROOT / "scripts" / "run_probes.py"),
-             "--run-dir", str(state.paths.run_dir)],
-            capture_output=True, text=True, timeout=PROBE_BATTERY_TIMEOUT_S,
-            cwd=str(REPO_ROOT),
-        )
+        battery_args = [str(REPO_ROOT / "scripts" / "run_probes.py"),
+                        "--run-dir", str(state.paths.run_dir)]
+        if exec_sandbox.enabled():
+            proc = _run_sandboxed_step(
+                "stage_5", exec_sandbox.step_for_args(battery_args),
+                battery_args, timeout=PROBE_BATTERY_TIMEOUT_S,
+            )
+        else:
+            proc = subprocess.run(
+                [sys.executable, *battery_args],
+                capture_output=True, text=True,
+                timeout=PROBE_BATTERY_TIMEOUT_S, cwd=str(REPO_ROOT),
+            )
         # Exit 1 = gating failures found: a valid, parseable outcome.
         report_path = pipeline_dir / "probe_report.json"
         if report_path.is_file():
@@ -19675,6 +19716,25 @@ def main(argv: list[str] | None = None) -> int:
     # is the correct path; this check catches anyone (build agent, manual
     # invocation, future tooling) that bypasses it.
     _check_for_session_deadlock_or_exit()
+
+    # Before any model call: a machine that cannot sandbox generated code
+    # should find out now, not at stage 2.d after the run has been paid for.
+    sandbox_problem = exec_sandbox.preflight()
+    if sandbox_problem is not None:
+        print(
+            "error: generated code must run in the execution sandbox, but "
+            f"{sandbox_problem}\n"
+            f"To run without it (the generated code then runs as you), set "
+            f"{exec_sandbox.MODE_ENV}=off.",
+            file=sys.stderr,
+        )
+        return 2
+    if not exec_sandbox.enabled():
+        print(
+            f"warning: {exec_sandbox.MODE_ENV} is off: generated code runs "
+            "without the per-step sandbox.",
+            file=sys.stderr,
+        )
 
     # Stage 0 setup resolves the run dir before the lock can exist. Acquire
     # the lock immediately after setup and before PDF parsing, so duplicate
