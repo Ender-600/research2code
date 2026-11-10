@@ -23,14 +23,27 @@ A single `.pt` file (any name) containing a dict:
 
 ```python
 torch.save({
-    "student_inputs_train": [PIL_image, ...],            # list of PIL.Image.Image
+    "student_inputs_train": [image_record, ...],         # image_to_record(PIL image)
     "teacher_inputs_train": [point_cloud_tensor, ...],   # list of Tensor (N_points, 3)
     "targets_train":        [target_dict, ...],
-    "student_inputs_test":  [PIL_image, ...],
+    "student_inputs_test":  [image_record, ...],
     "teacher_inputs_test":  [point_cloud_tensor, ...],
     "targets_test":         [target_dict, ...],
 }, "example_data/my_dataset.pt")
 ```
+
+Images are stored as image records, not pickled PIL objects, so the file loads
+with `torch.load(..., weights_only=True)`, which never runs code from the
+file. Build them with the helper `load_data` ships alongside:
+
+```python
+from method.data import image_to_record
+records = [image_to_record(img) for img in pil_images]
+```
+
+A `.pt` that pickles PIL images directly needs full unpickling, which runs
+code stored in the file, so `load_data` refuses it unless you trust the file
+and set `R2C_TRUST_PICKLE=1`.
 
 The i-th element across all three lists in a split is the SAME scene —
 paired alignment is critical for distillation to work. Each `target_dict`

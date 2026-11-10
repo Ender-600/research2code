@@ -1,5 +1,9 @@
 ---
 description: Stage 2.b — produces method/model.py (architecture class) and method/training.py (paper training protocol). Reads spec + taxonomy build plan + paper map. Sub-agent of the R2C package generation pipeline.
+permission:
+  read: allow
+  write: allow
+  bash: deny
 ---
 
 # r2c-architecture-coder

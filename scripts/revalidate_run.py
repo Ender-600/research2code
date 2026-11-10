@@ -56,6 +56,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import exec_sandbox
 from run_probes import main as run_probes_main
 from trusted import trusted_path
 
@@ -234,6 +235,36 @@ def summary_line(delta: dict, results_dir_rel: str) -> str:
     return "; ".join(parts)
 
 
+def _run_battery(run_dir: Path, battery_args: list[str]) -> int:
+    """Run the delivered battery on the run's package; return its exit code.
+
+    The battery imports generated code, so with the sandbox on it runs in the
+    run's sandbox, which is also where that code's dependencies are installed.
+    This process only reads the result and writes the delta."""
+    if exec_sandbox.enabled():
+        repo_root = Path(__file__).resolve().parent.parent
+        try:
+            proc = exec_sandbox.run(
+                exec_sandbox.REVALIDATE_STEP,
+                [str(repo_root / "scripts" / "run_probes.py"), *battery_args],
+                run_dir=run_dir, repo_root=repo_root, cwd=repo_root)
+        except exec_sandbox.SandboxError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 2
+        sys.stdout.write(proc.stdout)
+        sys.stderr.write(proc.stderr)
+        return proc.returncode
+    # The battery imports the run's method package; bytecode caches would
+    # dirty the run's git status and break the byte-identity guarantee
+    # (same rule as the vendored harness entrypoint).
+    dont_write = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        return run_probes_main(battery_args)
+    finally:
+        sys.dont_write_bytecode = dont_write
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--run-dir", required=True)
@@ -273,26 +304,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     results_dir = next_results_dir(run_dir)
-    battery_args = ["--run-dir", str(run_dir),
-                    "--output-dir", str(results_dir)]
+    battery_args = ["--run-dir", str(run_dir.resolve()),
+                    "--output-dir", str(results_dir.resolve())]
     if args.n_classes is not None:
         battery_args += ["--n-classes", str(args.n_classes)]
-    # The battery imports the run's method package; bytecode caches would
-    # dirty the run's git status and break the byte-identity guarantee
-    # (same rule as the vendored harness entrypoint).
-    dont_write = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
-    try:
-        battery_rc = run_probes_main(battery_args)
-    finally:
-        sys.dont_write_bytecode = dont_write
-    if battery_rc == 2:
+    battery_rc = _run_battery(run_dir, battery_args)
+    report_path = results_dir / "probe_report.json"
+    if battery_rc == 2 or not report_path.is_file():
         print("FAIL: the probe battery refused to run; see above.",
               file=sys.stderr)
         return 2
 
-    current = json.loads(
-        (results_dir / "probe_report.json").read_text(encoding="utf-8"))
+    current = json.loads(report_path.read_text(encoding="utf-8"))
     delta = compute_delta(baseline, current)
     results_dir_rel = results_dir.relative_to(run_dir).as_posix()
     summary = summary_line(delta, results_dir_rel)

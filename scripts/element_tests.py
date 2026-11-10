@@ -52,6 +52,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import exec_sandbox
 from trusted import trusted_path
 from build_anchor_join_table import (
     ARTIFACT_REL_PATH,
@@ -262,20 +263,38 @@ def validate_tests_dir(run_dir: Path, plan: dict[str, dict]) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 def run_test_module(run_dir: Path, module: Path,
-                    timeout_s: int = TEST_TIMEOUT_S) -> dict:
+                    timeout_s: int = TEST_TIMEOUT_S,
+                    venv_run_dir: Path | None = None) -> dict:
     """Run one test module against the run's own package. Nothing is
-    written into the run tree (no bytecode, no pytest cache)."""
+    written into the run tree (no bytecode, no pytest cache).
+
+    `venv_run_dir` names the real run when `run_dir` is a temporary copy."""
     import os  # noqa: PLC0415
     env = dict(os.environ)
     safe_run_dir = trusted_path(run_dir.resolve())
     env["PYTHONPATH"] = str(safe_run_dir)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    pytest_args = ["-m", "pytest", str(trusted_path(module)), "-q",
+                   "--no-header", "-p", "no:cacheprovider"]
     try:
-        proc = subprocess.run(
-            [sys.executable, "-m", "pytest", str(trusted_path(module)), "-q",
-             "--no-header", "-p", "no:cacheprovider"],
-            cwd=safe_run_dir, env=env, capture_output=True, text=True,
-            timeout=timeout_s)
+        if exec_sandbox.enabled():
+            # Without --rootdir, pytest collects from the repo root and stops
+            # at the first path the sandbox denies (.env).
+            proc = exec_sandbox.run(
+                exec_sandbox.ELEMENT_TEST_STEP,
+                [*pytest_args, f"--rootdir={safe_run_dir}"],
+                run_dir=safe_run_dir,
+                repo_root=Path(__file__).resolve().parent.parent,
+                cwd=safe_run_dir, timeout=timeout_s,
+                extra_env={"PYTHONPATH": str(safe_run_dir)},
+                venv_run_dir=venv_run_dir)
+        else:
+            proc = subprocess.run(
+                [sys.executable, *pytest_args],
+                cwd=safe_run_dir, env=env, capture_output=True, text=True,
+                timeout=timeout_s)
+    except exec_sandbox.SandboxError as exc:
+        return {"status": "sandbox_error", "detail": str(exc)}
     except subprocess.TimeoutExpired:
         return {"status": "timeout",
                 "detail": f"exceeded {timeout_s}s at fixture scale"}
@@ -390,7 +409,8 @@ def mutation_check(run_dir: Path, entry: dict, module: Path,
         (root / entry["file"]).write_text(mutated_source, encoding="utf-8")
         module_copy = root / module.name
         shutil.copy2(module, module_copy)
-        result = run_test_module(root, module_copy, timeout_s=timeout_s)
+        result = run_test_module(root, module_copy, timeout_s=timeout_s,
+                                 venv_run_dir=run_dir)
 
     if result["status"] == "failed":
         return {"status": "caught", "detail": description}

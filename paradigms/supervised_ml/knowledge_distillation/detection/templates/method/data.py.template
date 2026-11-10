@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import pickle
 import random
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -79,13 +80,64 @@ def _find_coco_dir(p: Path) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
+# Safe .pt loading
+# ---------------------------------------------------------------------------
+#
+# torch.load(weights_only=False) unpickles arbitrary objects, and unpickling
+# runs code stored in the file, so a .pt dropped into example_data/ (or a
+# planted cache) would execute with the user's privileges. weights_only=True
+# accepts only tensors, plain containers and primitives. Images are therefore
+# stored as {"mode", "size", "data"} byte records, which load safely and are
+# turned back into PIL images here. A legacy file that pickles PIL objects
+# needs full unpickling, which is allowed only when the user trusts the file
+# and sets R2C_TRUST_PICKLE=1.
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _torch_load_safe(path: Path):
+    try:
+        return torch.load(path, weights_only=True)
+    except pickle.UnpicklingError as e:
+        if _env_flag("R2C_TRUST_PICKLE"):
+            return torch.load(path, weights_only=False)
+        raise RuntimeError(
+            f"{path} holds objects other than tensors and plain containers "
+            "(for example pickled PIL images), and loading it would run code "
+            "stored in the file. Save images as image records (see "
+            "example_data/README.md), or, only if you trust this file, set "
+            "R2C_TRUST_PICKLE=1 to load it with full unpickling."
+        ) from e
+
+
+def image_to_record(img: Image) -> dict:
+    """Encode a PIL image as a dict that torch.load(weights_only=True) accepts."""
+    return {"mode": img.mode, "size": tuple(img.size), "data": img.tobytes()}
+
+
+def _as_image(item):
+    if isinstance(item, dict) and {"mode", "size", "data"} <= item.keys():
+        return PILImage.frombytes(item["mode"], tuple(item["size"]), item["data"])
+    return item
+
+
+def _as_images(items) -> list:
+    return [_as_image(item) for item in items]
+
+
+# ---------------------------------------------------------------------------
 # Per-format loaders
 # ---------------------------------------------------------------------------
 
 
 def _load_pt(path: Path):
-    d = torch.load(path, weights_only=False)
-    return d["images_train"], d["targets_train"], d["images_test"], d["targets_test"]
+    d = _torch_load_safe(path)
+    return (
+        _as_images(d["images_train"]), d["targets_train"],
+        _as_images(d["images_test"]), d["targets_test"],
+    )
 
 
 def _load_coco(coco_dir: Path, train_size: int, n_test: int, seed: int):
@@ -166,7 +218,7 @@ def _generate_synthetic_detection(
     cache_path = cache_dir / "synthetic_detection.pt"
     if cache_path.is_file():
         try:
-            cached = torch.load(cache_path, weights_only=False)
+            cached = torch.load(cache_path, weights_only=True)
             meta = cached.get("_meta", {})
             if (
                 meta.get("train_size") == train_size
@@ -174,8 +226,8 @@ def _generate_synthetic_detection(
                 and meta.get("seed") == seed
             ):
                 return (
-                    cached["images_train"], cached["targets_train"],
-                    cached["images_test"], cached["targets_test"],
+                    _as_images(cached["images_train"]), cached["targets_train"],
+                    _as_images(cached["images_test"]), cached["targets_test"],
                 )
         except Exception:
             pass  # fall through and regenerate
@@ -221,9 +273,9 @@ def _generate_synthetic_detection(
 
     torch.save(
         {
-            "images_train": images_train,
+            "images_train": [image_to_record(img) for img in images_train],
             "targets_train": targets_train,
-            "images_test": images_test,
+            "images_test": [image_to_record(img) for img in images_test],
             "targets_test": targets_test,
             "_meta": {"train_size": train_size, "n_test": n_test, "seed": seed},
         },

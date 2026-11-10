@@ -98,7 +98,12 @@ You may edit: `method/`, `notebook.ipynb`, `requirements.txt`,
    change is diffable.
 2. **Make the edit(s)** for this one request.
 3. **Re-gates — mandatory after ANY code or notebook edit** (skip only
-   for pure METHOD.md prose). Run the smoke gate with its output
+   for pure METHOD.md prose). The gates run in the run's sandbox with no
+   network, so if the edit changed `requirements.txt`, install it into
+   the run's own environment first, disclosing it as described under
+   "Artifacts you create, and the environment":
+   `python scripts/exec_sandbox.py -m pip install -r <run_dir>/requirements.txt`.
+   Run the smoke gate with its output
    REDIRECTED and read only the tail — twice in the first live
    validation, a heavy streamed-output turn died mid-stream with a
    malformed tool call, and the per-cell smoke stream is the heaviest

@@ -21,6 +21,11 @@ fi
 # The model every R2C agent runs on, as opencode's <provider>/<model> id.
 export R2C_MODEL="${R2C_MODEL:-google/gemini-flash-latest}"
 
+# Runs refuse to start if generated code cannot be sandboxed; say so up front.
+if ! sandbox_problem="$(python3 "${WORKSPACE}/scripts/exec_sandbox.py" 2>&1)"; then
+  echo "WARNING: R2C runs will not start until this is fixed: ${sandbox_problem}" >&2
+fi
+
 # Export the port for the TUI agent's bash environment: the /r2c-run and
 # /r2c-paradigms commands read R2C_PORT to route their drivers to THIS server.
 export R2C_PORT="${PORT}"
@@ -46,17 +51,22 @@ _port_open() {
 # already on the port; R2C_NO_WATCH=1 skips it. The browser open is
 # best-effort; the echoed URL is the fallback.
 WATCH_PORT="${R2C_WATCH_PORT:-8765}"
+# Loopback by default. sandbox/r2c-sandbox.sh sets 0.0.0.0 inside the
+# container and publishes the port on host loopback only.
+WATCH_HOST="${R2C_WATCH_HOST:-127.0.0.1}"
 WATCH_PID=""
 _start_watch() {
   [ -n "${R2C_NO_WATCH:-}" ] && return 0
   if _port_open "${WATCH_PORT}"; then
     echo "r2c-watch live view already up on port ${WATCH_PORT}; reusing it."
   else
-    python3 "${WORKSPACE}/scripts/r2c_watch.py" --host 127.0.0.1 \
+    python3 "${WORKSPACE}/scripts/r2c_watch.py" --host "${WATCH_HOST}" \
       --port "${WATCH_PORT}" > "/tmp/r2c-watch-${WATCH_PORT}.log" 2>&1 &
     WATCH_PID=$!
     echo "r2c-watch live view up on http://127.0.0.1:${WATCH_PORT}/ (PID ${WATCH_PID}, log: /tmp/r2c-watch-${WATCH_PORT}.log)"
   fi
+  # No browser inside the sandbox container; open the URL on the host.
+  [ -n "${R2C_SANDBOX:-}" ] && return 0
   python3 -c "import webbrowser; webbrowser.open('http://127.0.0.1:${WATCH_PORT}/')" \
     2>/dev/null || true
 }

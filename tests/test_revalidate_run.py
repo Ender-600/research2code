@@ -17,6 +17,8 @@ import pytest
 import subprocess
 from pathlib import Path
 
+import exec_sandbox
+import revalidate_run
 from revalidate_run import (
     compute_delta,
     main as revalidate_main,
@@ -302,3 +304,74 @@ def test_summary_line_names_flips_drift_and_results_home():
     assert "1 regression(s): AL-5" in line
     assert "check set drifted (+1/-0, adaptation)" in line
     assert "details/post_delivery_validation/004" in line
+
+
+def _run_with_baseline(tmp_path: Path) -> Path:
+    run = tmp_path / "r2c_runs" / "delivered"
+    (run / ".pipeline").mkdir(parents=True)
+    (run / ".pipeline" / "probe_report.json").write_text(json.dumps({
+        "verdicts": [{"probe_id": "X", "verdict": "pass", "message": ""}],
+        "battery_version": "v"}))
+    _git(run, "init")
+    _git(run, "add", "-A")
+    _git(run, "commit", "-m", "as delivered")
+    return run
+
+
+@pytest.fixture
+def sandbox_on(monkeypatch):
+    monkeypatch.setenv(exec_sandbox.MODE_ENV, "srt")
+
+    def must_not_run(argv):
+        raise AssertionError("generated code ran outside the sandbox")
+
+    monkeypatch.setattr(revalidate_run, "run_probes_main", must_not_run)
+
+
+def test_battery_runs_in_the_runs_sandbox(tmp_path, monkeypatch, sandbox_on):
+    run = _run_with_baseline(tmp_path)
+    seen = {}
+
+    def fake_run(step, args, **kwargs):
+        seen.update(step=step, args=args, **kwargs)
+        out = Path(args[args.index("--output-dir") + 1])
+        out.mkdir(parents=True)
+        (out / "probe_report.json").write_text(json.dumps({
+            "verdicts": [{"probe_id": "X", "verdict": "pass", "message": ""}],
+            "battery_version": "v"}))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(exec_sandbox, "run", fake_run)
+    monkeypatch.chdir(run.parent)
+    assert revalidate_main(["--run-dir", run.name]) == 0
+    assert seen["step"] is exec_sandbox.REVALIDATE_STEP
+    assert not seen["step"].pipeline_outputs  # delivery evidence stays frozen
+    assert Path(seen["args"][0]).name == "run_probes.py"
+    assert seen["args"][seen["args"].index("--run-dir") + 1] == str(run.resolve())
+    assert Path(seen["args"][seen["args"].index("--output-dir") + 1]).is_absolute()
+    record = run / "details" / "post_delivery_validation" / "001" / "revalidation.json"
+    assert json.loads(record.read_text())["delivery_truth"] is False
+
+
+def test_a_sandbox_failure_refuses_instead_of_running_bare(
+    tmp_path, monkeypatch, sandbox_on, capsys,
+):
+    run = _run_with_baseline(tmp_path)
+
+    def broken(*args, **kwargs):
+        raise exec_sandbox.SandboxError("srt is not installed")
+
+    monkeypatch.setattr(exec_sandbox, "run", broken)
+    assert revalidate_main(["--run-dir", str(run)]) == 2
+    assert "srt is not installed" in capsys.readouterr().err
+
+
+def test_a_battery_that_leaves_no_report_is_a_refusal(
+    tmp_path, monkeypatch, sandbox_on,
+):
+    run = _run_with_baseline(tmp_path)
+    monkeypatch.setattr(
+        exec_sandbox, "run",
+        lambda step, args, **kw: subprocess.CompletedProcess(args, 1, "", "boom"))
+    assert revalidate_main(["--run-dir", str(run)]) == 2
+

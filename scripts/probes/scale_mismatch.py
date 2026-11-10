@@ -147,7 +147,10 @@ def _iter_feature_rows_from_pt(path: Path):
     except ImportError:
         return "no_torch"
     try:
-        d = torch.load(path, weights_only=False)
+        # weights_only=True: the probe runs in the driver process, and full
+        # unpickling would execute code stored in the run's data file. A file
+        # that needs full unpickling is reported unreadable, never loaded.
+        d = torch.load(path, weights_only=True)
     except Exception:  # noqa: BLE0001 — any unpickling failure is "unreadable"
         return None
     if not isinstance(d, dict):
@@ -263,9 +266,10 @@ def measure_box_coordinate_scale(run_dir: Path) -> tuple[str | None, str]:
         except ImportError:
             return None, f"torch unavailable to read {data_file.name}"
         try:
-            obj = torch.load(data_file, weights_only=False)
+            obj = torch.load(data_file, weights_only=True)  # see above
         except Exception:  # noqa: BLE001 — any unpickling failure is unreadable
-            return None, f"could not unpickle {data_file.name}"
+            return None, (f"could not load {data_file.name} without full "
+                          f"unpickling (weights_only=True)")
     elif data_file.suffix == ".json":
         try:
             obj = json.loads(data_file.read_text(encoding="utf-8"))

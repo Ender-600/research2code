@@ -1,0 +1,5 @@
+# The image needs only the lockfile; the repo is bind-mounted at run time.
+# Keeping everything else out of the build context also keeps .env (API
+# keys) and r2c_runs/ out of image layers.
+*
+!requirements.lock

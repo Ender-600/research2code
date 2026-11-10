@@ -37,6 +37,8 @@ cp .env.example .env
 /r2c-run bayesian-active-learning
 ```
 
+**Generated code runs in a sandbox.** R2C executes code an LLM wrote from an untrusted paper, so every step that installs, imports or runs that code goes through a per-step OS sandbox: no model keys, no access to your home directory, no network except PyPI for `pip install`. It needs [`srt`](https://github.com/anthropic-experimental/sandbox-runtime): `npm install -g @anthropic-ai/sandbox-runtime@0.0.81`. A run refuses to start without it, or set `R2C_EXEC_SANDBOX=off`. To also put the agents and the driver in a container, run steps 3 and 4 with `sandbox/r2c-sandbox.sh build` and then `sandbox/r2c-sandbox.sh` instead of `./r2c-start.sh`. See [sandbox/README.md](sandbox/README.md).
+
 The driver detaches and runs on its own, roughly 30 to 120 minutes depending on the paper and the model. The command prints a log path you can `tail -f` from any terminal. When it finishes:
 
 ```bash
