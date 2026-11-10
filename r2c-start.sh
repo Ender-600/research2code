@@ -21,6 +21,11 @@ fi
 # The model every R2C agent runs on, as opencode's <provider>/<model> id.
 export R2C_MODEL="${R2C_MODEL:-google/gemini-flash-latest}"
 
+# Runs refuse to start if generated code cannot be sandboxed; say so up front.
+if ! sandbox_problem="$(python3 "${WORKSPACE}/scripts/exec_sandbox.py" 2>&1)"; then
+  echo "WARNING: R2C runs will not start until this is fixed: ${sandbox_problem}" >&2
+fi
+
 # Export the port for the TUI agent's bash environment: the /r2c-run and
 # /r2c-paradigms commands read R2C_PORT to route their drivers to THIS server.
 export R2C_PORT="${PORT}"

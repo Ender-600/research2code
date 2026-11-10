@@ -48,7 +48,9 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -327,12 +329,24 @@ def main(argv: list[str] | None = None) -> int:
               f"(bound to {sys.executable})")
 
     progress_callbacks, progress_state = _make_progress_callbacks(n_cells, n_code)
+    kernel_kwargs: dict = {}
+    if os.environ.get("R2C_KERNEL_TRANSPORT", "") == "ipc":
+        # Set by scripts/exec_sandbox.py on macOS, where the sandbox allows
+        # Unix sockets in the step's temp directory but no localhost TCP.
+        from jupyter_client.manager import AsyncKernelManager
+
+        kernel_kwargs["km"] = AsyncKernelManager(
+            kernel_name=kernel_name,
+            transport="ipc",
+            ip=os.path.join(tempfile.gettempdir(), "k"),
+        )
     client = NotebookClient(
         nb,
         timeout=args.timeout,
         kernel_name=kernel_name,
         resources={"metadata": {"path": str(args.run_dir)}},
         allow_errors=False,
+        **kernel_kwargs,
         **progress_callbacks,
     )
 
@@ -517,4 +531,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    import exec_sandbox  # a sibling of this file only when run as a script
+
+    exec_sandbox.relaunch_in_sandbox(__file__)
     sys.exit(main())
